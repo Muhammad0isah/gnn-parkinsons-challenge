@@ -8,9 +8,9 @@ import numpy as np
 from sklearn.metrics import f1_score
 from dgl.nn import GATConv
 
-torch.manual_seed(42)
-np.random.seed(42)
-dgl.seed(42)
+torch.manual_seed(25)
+np.random.seed(25)
+dgl.seed(25)
 
 
 class GATModel(nn.Module):
