@@ -107,7 +107,7 @@ def prepare_data_splits(df, test_size=0.2, val_size=0.15):
     return X, y, train_idx, val_idx, test_idx, scaler
 
 
-def save_graph_data(g, features, labels, train_idx, val_idx, test_idx, output_dir='../data'):
+def save_graph_data(g, features, labels, train_idx, val_idx, test_idx, output_dir='../data/public'):
     os.makedirs(output_dir, exist_ok=True)
     
     features = torch.FloatTensor(features)
@@ -129,7 +129,7 @@ def save_graph_data(g, features, labels, train_idx, val_idx, test_idx, output_di
     train_data = {
         'graph': g,
         'features': features,
-        'labels': safe_labels,   # ← only train+val labels visible
+        'labels': safe_labels,   # ← only train+val labels visible, test = -1
         'train_mask': train_mask,
         'val_mask': val_mask
     }
@@ -137,6 +137,12 @@ def save_graph_data(g, features, labels, train_idx, val_idx, test_idx, output_di
     with open(os.path.join(output_dir, 'train_graph.pkl'), 'wb') as f:
         pickle.dump(train_data, f)
     print(f"\nSaved training data to {output_dir}/train_graph.pkl")
+
+    # Verify hiding worked
+    hidden = (safe_labels == -1).sum().item()
+    visible = (safe_labels != -1).sum().item()
+    print(f"  ✅ Hidden test labels: {hidden}")
+    print(f"  ✅ Visible train+val labels: {visible}")
     
     test_data = {
         'graph': g,
@@ -148,17 +154,21 @@ def save_graph_data(g, features, labels, train_idx, val_idx, test_idx, output_di
         pickle.dump(test_data, f)
     print(f"Saved test data to {output_dir}/test_graph.pkl")
     
+    # Save ground truth separately (for scoring only — never share this!)
     ground_truth = {
         'node_ids': test_idx,
         'labels': labels[test_idx].numpy()
     }
     
-    with open(os.path.join(output_dir, 'test_labels.pkl'), 'wb') as f:
+    # Save ground truth one level up so it's NOT in the public folder
+    private_dir = os.path.join(os.path.dirname(output_dir), 'private')
+    os.makedirs(private_dir, exist_ok=True)
+    with open(os.path.join(private_dir, 'test_labels.pkl'), 'wb') as f:
         pickle.dump(ground_truth, f)
-    print(f"Saved test labels to {output_dir}/test_labels.pkl (hidden)")
+    print(f"Saved test labels to {private_dir}/test_labels.pkl (hidden - do not share!)")
 
 
-def create_feature_description(output_dir='../data'):
+def create_feature_description(output_dir='../data/public'):
     desc = """Parkinson's Disease Voice Measurement Features
 ==============================================
 Source: UCI Machine Learning Repository
@@ -177,7 +187,7 @@ Target: status (0=Healthy, 1=Parkinson's)
     
     with open(os.path.join(output_dir, 'feature_names.txt'), 'w') as f:
         f.write(desc)
-    print(f"Saved feature descriptions")
+    print(f"Saved feature descriptions to {output_dir}/feature_names.txt")
 
 
 def main():
@@ -192,8 +202,8 @@ def main():
     X, y, train_idx, val_idx, test_idx, scaler = prepare_data_splits(df)
     g = create_graph_from_features(X, y, k=5)
     g = add_subject_connections(g, df)
-    save_graph_data(g, X, y, train_idx, val_idx, test_idx)
-    create_feature_description()
+    save_graph_data(g, X, y, train_idx, val_idx, test_idx, output_dir='../data/public')
+    create_feature_description(output_dir='../data/public')
     
     sample_submission = pd.DataFrame({
         'node_id': test_idx,
@@ -202,9 +212,14 @@ def main():
     
     os.makedirs('../submissions', exist_ok=True)
     sample_submission.to_csv('../submissions/sample_submission.csv', index=False)
+    print(f"\nSaved sample submission to ../submissions/sample_submission.csv")
     
     print("\n" + "=" * 70)
     print("Data generation complete!")
+    print("\nFolder structure:")
+    print("  data/public/train_graph.pkl  ← share with participants")
+    print("  data/public/test_graph.pkl   ← share with participants")
+    print("  data/private/test_labels.pkl ← NEVER share (ground truth)")
     print("=" * 70)
 
 
