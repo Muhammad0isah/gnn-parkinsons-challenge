@@ -6,9 +6,11 @@ def render_leaderboard():
     # Read CSV
     df = pd.read_csv('docs/leaderboard.csv')
     
-    # Sort by score descending
-    df = df.sort_values('score', ascending=False).reset_index(drop=True)
-    df['rank'] = range(1, len(df) + 1)
+    # Sort by score descending, then by date ascending (earlier submission wins tiebreak)
+    df = df.sort_values(['score', 'date'], ascending=[False, True]).reset_index(drop=True)
+    
+    # Ties share the same rank number (Kaggle-style)
+    df['rank'] = df['score'].rank(method='min', ascending=False).astype(int)
     
     # Generate markdown
     with open('leaderboard/leaderboard.md', 'w') as f:
@@ -18,8 +20,9 @@ def render_leaderboard():
         f.write('|------|------|-------|-------|------|\n')
         
         for _, row in df.iterrows():
-            medal = '🥇' if row['rank'] == 1 else '🥈' if row['rank'] == 2 else '🥉' if row['rank'] == 3 else ''
-            f.write(f"| {medal} {row['rank']} | {row['team']} | {row['score']:.4f} | {row['model']} | {row['date']} |\n")
+            rank = row['rank']
+            medal = '🥇' if rank == 1 else '🥈' if rank == 2 else '🥉' if rank == 3 else ''
+            f.write(f"| {medal} {rank} | {row['team']} | {row['score']:.4f} | {row['model']} | {row['date']} |\n")
 
 if __name__ == '__main__':
     render_leaderboard()
