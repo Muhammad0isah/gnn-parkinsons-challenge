@@ -56,13 +56,19 @@ jobs:
         id: find
         if: steps.check.outcome == 'success'
         run: |
-          USERNAME="${{ steps.user.outputs.username }}"
-          FILE=$(find submissions/encrypted -name "${USERNAME}.enc" -type f 2>/dev/null | head -1)
+          # Get the .enc file that was added/changed in this specific PR
+          FILE=$(git diff --name-only origin/main...pr-branch | grep "submissions/encrypted/.*\.enc$" | head -1)
+          
           if [ -z "$FILE" ]; then
-            echo "No file named ${USERNAME}.enc found"
-            echo "file=" >> $GITHUB_OUTPUT
+            # Fallback: find any .enc file in the submissions/encrypted directory
+            FILE=$(find submissions/encrypted -name "*.enc" -type f 2>/dev/null | head -1)
+          fi
+          
+          if [ -z "$FILE" ]; then
+            echo "No .enc file found in this PR"
             exit 1
           fi
+          
           echo "file=$FILE" >> $GITHUB_OUTPUT
           echo "Found: $FILE"
         continue-on-error: true
@@ -215,31 +221,16 @@ jobs:
               body: '## ❌ Already Submitted\n\nOnly **ONE** submission per participant.\n\nYour previous submission stands as your final entry.'
             });
 
-      - name: Comment if wrong filename
+      - name: Comment if file not found
         if: steps.check.outcome == 'success' && steps.find.outcome == 'failure'
         uses: actions/github-script@v6
         with:
           script: |
-            const username = '${{ steps.user.outputs.username }}';
             github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '## ❌ Wrong File Name\n\n'
-                + 'Your submission file **must be named after your GitHub username**.\n\n'
-                + '**Required filename:** `' + username + '.enc`\n\n'
-                + '**Steps to fix:**\n'
-                + '```bash\n'
-                + '# 1. Encrypt your predictions\n'
-                + 'python encryption/encrypt_submission.py submissions/your_predictions.csv\n\n'
-                + '# 2. Rename the output file to your username\n'
-                + 'mv submissions/encrypted/your_predictions.enc submissions/encrypted/' + username + '.enc\n\n'
-                + '# 3. Add, commit and push\n'
-                + 'git add submissions/encrypted/' + username + '.enc\n'
-                + 'git commit -m "Add submission"\n'
-                + 'git push\n'
-                + '```\n\n'
-                + 'This attempt does **not** count. Close this PR and open a new one with the correctly named file.'
+              body: '## ❌ No Encrypted File Found\n\nNo `.enc` file was found in your PR.\n\n**Steps to fix:**\n```bash\n# 1. Encrypt your predictions\npython encryption/encrypt_submission.py submissions/your_predictions.csv\n\n# 2. Add, commit and push\ngit add submissions/encrypted/your_file.enc\ngit commit -m "Add submission"\ngit push\n```\n\nClose this PR and open a new one with your encrypted file.'
             });
 
       - name: Comment if decryption failed
@@ -251,7 +242,7 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '## ❌ Decryption Failed\n\nYour file could not be decrypted. This attempt does **not** count.\n\n**Fix:**\n```bash\npython encryption/encrypt_submission.py submissions/your_predictions.csv\n```\n\nClose this PR and open a new one with the fresh file.'
+              body: '## ❌ Decryption Failed\n\nYour file could not be decrypted. This attempt does **not** count.\n\n**Fix:**\n```bash\npython encryption/encrypt_submission.py submissions/your_predictions.csv\n```\n\nMake sure you are using the official `encrypt_submission.py` script. Close this PR and open a new one with the fresh file.'
             });
 
       - name: Comment if scoring failed
@@ -263,5 +254,5 @@ jobs:
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: '## ❌ Scoring Failed\n\nDecryption succeeded but scoring failed. This attempt does **not** count.\n\n**Possible reasons:**\n- Ground truth labels not configured in GitHub Secrets\n- Invalid submission format\n\n**Required format:**\n```csv\nnode_id,prediction\n0,1\n1,0\n...\n38,0\n```\n\nExactly 39 rows, `node_id` 0-38, `prediction` 0 or 1 only.'
+              body: '## ❌ Scoring Failed\n\nDecryption succeeded but scoring failed. This attempt does **not** count.\n\n**Possible reasons:**\n- Invalid submission format\n\n**Required format:**\n```csv\nnode_id,prediction\n0,1\n1,0\n...\n38,0\n```\n\nExactly 39 rows, `node_id` 0-38, `prediction` 0 or 1 only.'
             });
