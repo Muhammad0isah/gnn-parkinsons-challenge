@@ -111,22 +111,44 @@ jobs:
         run: |
           mkdir -p docs
           TIMESTAMP=$(date -u +"%Y-%m-%d")
-          
-          if [ ! -f "docs/leaderboard.csv" ]; then
-            echo "team,score,model,date,notes" > docs/leaderboard.csv
-          fi
-          
-          echo "${{ steps.user.outputs.username }},${{ steps.score.outputs.score }},GNN,$TIMESTAMP,${{ steps.user.outputs.username }}" >> docs/leaderboard.csv
-          
+          USERNAME="${{ steps.user.outputs.username }}"
+          SCORE="${{ steps.score.outputs.score }}"
+
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add docs/leaderboard.csv
-          git commit -m "Add submission for ${{ steps.user.outputs.username }}"
-          
+
           for i in 1 2 3 4 5; do
-            git pull origin main --rebase && git push origin HEAD:main && break
-            echo "Push failed, retrying in 5s (attempt $i/5)..."
-            sleep 5
+            # Always pull latest main before writing
+            git fetch origin main
+            git reset --hard origin/main
+
+            # Re-checkout the encrypted submission (lost after reset)
+            git fetch origin pull/${{ github.event.pull_request.number }}/head:pr-branch
+            git checkout pr-branch -- submissions/encrypted/
+
+            # Write to leaderboard
+            if [ ! -f "docs/leaderboard.csv" ]; then
+              echo "team,score,model,date,notes" > docs/leaderboard.csv
+            fi
+
+            # Skip if user already exists (race condition guard)
+            if grep -q "^${USERNAME}," docs/leaderboard.csv; then
+              echo "Already in leaderboard, skipping."
+              break
+            fi
+
+            echo "${USERNAME},${SCORE},GNN,${TIMESTAMP},${USERNAME}" >> docs/leaderboard.csv
+
+            git add docs/leaderboard.csv
+            git commit -m "Add submission for ${USERNAME}"
+
+            if git push origin HEAD:main; then
+              echo "✅ Push succeeded on attempt $i"
+              break
+            else
+              echo "Push failed, retrying in 5s (attempt $i/5)..."
+              sleep 5
+            fi
           done
       
       - name: Get rank
@@ -137,17 +159,27 @@ jobs:
           import pandas as pd
           import os
           import sys
-          
+
           try:
+              # Pull latest leaderboard after push
               df = pd.read_csv('docs/leaderboard.csv')
+              df['score'] = pd.to_numeric(df['score'], errors='coerce')
+              df = df.dropna(subset=['score'])
               df = df.sort_values('score', ascending=False)
-              df['rank'] = df['score'].rank(method='min', ascending=False).astype(int)
-              
+              df['rank'] = range(1, len(df) + 1)
+
               username = "${{ steps.user.outputs.username }}"
-              user_rank = df[df['team'] == username]['rank'].values[0]
-              
+              match = df[df['team'] == username]
+
+              if match.empty:
+                  print(f"User {username} not found in leaderboard")
+                  sys.exit(1)
+
+              user_rank = int(match['rank'].values[0])
+
               with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                   f.write(f"rank={user_rank}\n")
+
           except Exception as e:
               print(f"Error calculating rank: {e}")
               sys.exit(1)
