@@ -26,9 +26,9 @@ def load_ground_truth(ground_truth_path=None):
 
     # Try multiple possible paths for local testing
     possible_paths = [
-        Path('data/private/test_labels.pkl'),   # ← correct path
+        Path('data/private/test_labels.pkl'),
         Path('../data/private/test_labels.pkl'),
-        Path('data/test_labels.pkl'),            # legacy fallback
+        Path('data/test_labels.pkl'),
         Path('../data/test_labels.pkl'),
         Path('/tmp/ground_truth.csv'),
     ]
@@ -37,7 +37,6 @@ def load_ground_truth(ground_truth_path=None):
         if path.exists():
             print(f"✓ Found ground truth at: {path}")
 
-            # Handle CSV files
             if path.suffix == '.csv':
                 df = pd.read_csv(path)
                 if 'node_id' not in df.columns or 'label' not in df.columns:
@@ -45,11 +44,9 @@ def load_ground_truth(ground_truth_path=None):
                         df.columns = ['node_id', 'label']
                 return df.sort_values('node_id').reset_index(drop=True)
 
-            # Handle pickle files
             with open(path, 'rb') as f:
                 data = pickle.load(f)
 
-            # ✅ Handle the {'node_ids': ..., 'labels': ...} format from generate_graph_data.py
             if isinstance(data, dict) and 'node_ids' in data and 'labels' in data:
                 df = pd.DataFrame({
                     'node_id': data['node_ids'],
@@ -73,22 +70,50 @@ def load_ground_truth(ground_truth_path=None):
     return None
 
 
+def normalize_submission(submission_df, ground_truth):
+    """
+    Normalize node_ids in submission to match ground truth format.
+    Handles two cases:
+      - Submission uses sequential ids (0-38)  → use as-is
+      - Submission uses original graph ids (1-194) → remap to sequential by sort order
+    """
+    ground_truth_ids = set(ground_truth['node_id'].values)
+    submission_ids   = set(submission_df['node_id'].values)
+
+    # Keep only node_id and prediction columns
+    submission_df = submission_df[['node_id', 'prediction']].copy()
+
+    # Check if ids already match ground truth
+    if submission_ids == ground_truth_ids:
+        print("✓ node_ids match ground truth format")
+        return submission_df
+
+    # Check if submission uses original graph node ids (larger range)
+    if submission_df['node_id'].max() > 38:
+        print(f"⚠️  Submission uses original node_ids (range {submission_df['node_id'].min()}-{submission_df['node_id'].max()})")
+        print("   Remapping to sequential 0-38 by sort order...")
+        submission_df = submission_df.sort_values('node_id').reset_index(drop=True)
+        submission_df['node_id'] = range(len(submission_df))
+        print("✓ Remapped successfully")
+
+    return submission_df
+
+
 def validate_submission(submission_df, ground_truth):
     """Validate submission format"""
     errors = []
 
     # Check columns
-    required_cols = ['node_id', 'prediction']
-    if not all(col in submission_df.columns for col in required_cols):
-        errors.append(f"Missing required columns. Expected: {required_cols}, Got: {list(submission_df.columns)}")
+    if 'node_id' not in submission_df.columns or 'prediction' not in submission_df.columns:
+        errors.append(f"Missing required columns. Expected: ['node_id', 'prediction'], Got: {list(submission_df.columns)}")
         return errors
 
-    # Check row count matches ground truth
+    # Check row count
     expected_count = len(ground_truth)
     if len(submission_df) != expected_count:
         errors.append(f"Expected {expected_count} predictions, got {len(submission_df)}")
 
-    # Check node IDs match ground truth exactly
+    # Check node IDs match ground truth
     expected_ids = set(ground_truth['node_id'].values)
     actual_ids   = set(submission_df['node_id'].values)
     if actual_ids != expected_ids:
@@ -137,14 +162,17 @@ def main():
         print(f"❌ Error loading submission: {e}")
         sys.exit(1)
 
-    # Load ground truth first (needed for validation)
+    # Load ground truth
     ground_truth = load_ground_truth(ground_truth_file)
     if ground_truth is None:
         print("\n⚠️  Cannot score submission without ground truth labels.")
         print("   Your submission format is valid and ready to submit!")
         sys.exit(0)
 
-    # Validate format against ground truth
+    # Normalize node_ids before validation
+    submission_df = normalize_submission(submission_df, ground_truth)
+
+    # Validate
     errors = validate_submission(submission_df, ground_truth)
     if errors:
         print("❌ Submission validation failed:")
@@ -154,7 +182,7 @@ def main():
 
     print("✓ Submission format is valid")
 
-    # Merge and calculate metrics
+    # Merge and score
     merged = submission_df.merge(ground_truth, on='node_id', how='inner')
 
     if len(merged) != len(ground_truth):
@@ -176,7 +204,6 @@ def main():
         print(f"AUC-ROC:   {metrics['auc_roc']:.4f}")
     print("=" * 60)
 
-    # For GitHub Actions - output in parseable format
     print(f"\nScore: {metrics['macro_f1']:.4f}")
 
     print("\n📊 Class distribution in predictions:")
